@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import normalize
 
 
 def find_bmu(sample, nodes):
@@ -32,8 +33,8 @@ def som_fit(dataset, n_epochs=1, verbose=0, init_learning_rate=0.1, finetune_lea
 
                 fig = plt.figure()
                 ax = fig.subplots()
-                ax.scatter(scores[:, 0], scores[:, 1], c=color_mapper(dataset.iloc[:, 4]), cmap="Set2")
-                plt.title("#iter: {:d} - before step".format(i_sample))
+                ax.scatter(scores[:, 0], scores[:, 1], c=label_mapper(dataset.iloc[:, 4]), cmap="Set2")
+                plt.title("e{:d} - #iter: {:d} - before step".format(epoch, i_sample))
                 for i in range(3):
                     if i == i_bmu:
                         color = 'r'
@@ -41,11 +42,11 @@ def som_fit(dataset, n_epochs=1, verbose=0, init_learning_rate=0.1, finetune_lea
                         color = 'black'
                     ax.scatter(nodes_scores[i, 0], nodes_scores[i, 1], c=color)
                 ax.scatter(scores[i_sample, 0], scores[i_sample, 1], c='orange', s=40)
-                plt.savefig("ex3_outputs/{:d}_before".format(i_sample))
+                plt.savefig("ex3_outputs/e{:d}_{:d}_before".format(epoch, i_sample))
                 plt.close(fig)
 
             # learning step
-            if i_sample <= finetune_treshod:
+            if epoch < 1 and i_sample <= finetune_treshod:
                 lr = init_learning_rate
                 nbr_c = init_neighbor_coef
             else:
@@ -53,9 +54,9 @@ def som_fit(dataset, n_epochs=1, verbose=0, init_learning_rate=0.1, finetune_lea
                 nbr_c = finetune_neighbor_coef
             for i in range(3):
                 if i == i_bmu:
-                    nodes[i] += lr * (sample[:4] - nodes[i])
+                    nodes.iloc[i] += lr * (sample[:4] - nodes.iloc[i])
                 else:
-                    nodes[i] += lr * nbr_c * (sample[:4] - nodes[i])
+                    nodes.iloc[i] += lr * nbr_c * (sample[:4] - nodes.iloc[i])
 
             # plot state after (post) step
             if verbose == 2:
@@ -63,8 +64,8 @@ def som_fit(dataset, n_epochs=1, verbose=0, init_learning_rate=0.1, finetune_lea
 
                 fig = plt.figure()
                 ax = fig.subplots()
-                ax.scatter(scores[:, 0], scores[:, 1], c=color_mapper(dataset.iloc[:, 4]), cmap="Set2")
-                plt.title("#iter: {:d} - after step".format(i_sample))
+                ax.scatter(scores[:, 0], scores[:, 1], c=label_mapper(dataset.iloc[:, 4]), cmap="Set2")
+                plt.title("e{:d} - #iter: {:d} - after step".format(epoch, i_sample))
                 for i in range(3):
                     if i == i_bmu:
                         color = 'r'
@@ -72,31 +73,17 @@ def som_fit(dataset, n_epochs=1, verbose=0, init_learning_rate=0.1, finetune_lea
                         color = 'black'
                     ax.scatter(nodes_scores[i, 0], nodes_scores[i, 1], c=color)
                 ax.scatter(scores[i_sample, 0], scores[i_sample, 1], c='orange', s=40)
-                plt.savefig("ex3_outputs/{:d}_post".format(i_sample))
+                plt.savefig("ex3_outputs/e{:d}_{:d}_post".format(epoch, i_sample))
                 plt.close(fig)
-
-    nodes_scores = pca.transform(nodes)
-
-    fig = plt.figure()
-    ax = fig.subplots()
-    ax.scatter(scores[:, 0], scores[:, 1], c=color_mapper(dataset.iloc[:, 4]), cmap="Set2")
-    ax.scatter(nodes_scores[:, 0], nodes_scores[:, 1], c='black')
-    plt.show()
-    plt.close(fig)
 
     # assign labels to nodes
     node_labels_candidates = [[], [], []]
-    i = 0
-    while i < dataset.shape[0] and (len(node_labels_candidates[0]) < 10 or len(node_labels_candidates[1]) < 10 or len(node_labels_candidates[2]) < 10):
-        sample = dataset.iloc[i]
+    for i_sample, sample in dataset.iterrows():
         i_bmu = find_bmu(sample, nodes)
-        if len(node_labels_candidates[i_bmu]) < 10:
-            node_labels_candidates[i_bmu].append(sample[4])
-        i += 1
+        node_labels_candidates[i_bmu].append(sample[4])
     node_labels = [max(set(node_labels_candidates[0]), key=node_labels_candidates[0].count),
                    max(set(node_labels_candidates[1]), key=node_labels_candidates[1].count),
                    max(set(node_labels_candidates[2]), key=node_labels_candidates[2].count)]
-
     nodes[4] = pd.Series(node_labels)
     return nodes
 
@@ -109,21 +96,56 @@ def som_predict(dataset, nodes):
     return predicted_labels
 
 
-def color_mapper(labels):
+def label_mapper(labels):
     result = []
     for x in labels:
         if x == "Iris-setosa":
             result.append(0)
         elif x == "Iris-virginica":
             result.append(1)
-        else:
+        elif x == "Iris-versicolor":
             result.append(2)
+        else:
+            result.append(-1)
     return result
 
 
+def confusion_matrix(y_true, y_pred):
+    conf_matrix = np.zeros((3, 3), dtype=int)
+    for true, predicted in zip(y_true, y_pred):
+        conf_matrix[predicted][true] += 1
+    return conf_matrix
+
+
+def sensitivity(conf_mat):
+    result = []
+    for i in range(3):
+        tp = conf_mat[i][i]
+        fn = sum([conf_mat[x][i] for x in range(3) if x != i])
+        result.append(tp / (tp + fn))
+    return result
+
+
+def specificity(conf_mat):
+    result = []
+    for i in range(3):
+        tn = sum([conf_mat[y][x] for x in range(3) for y in range(3) if x != i and y != i])
+        fp = sum([conf_mat[i][x] for x in range(3) if x != i])
+        result.append(tn / (tn + fp))
+    return result
+
+
+def accuracy(conf_mat):
+    tp = []
+    for i in range(3):
+        tp.append(conf_mat[i][i])
+    return sum(tp) / sum(sum(conf_mat))
+
+
 if __name__ == '__main__':
-    # load data
+    # load data + normalize + shuffle
     data = pd.read_csv("iris.data", header=None)
+    data.iloc[:, :4] = normalize(data.iloc[:, :4])
 
     # divide into train and test dataset
     train = data.iloc[:40]
@@ -137,21 +159,20 @@ if __name__ == '__main__':
     train = train.sample(frac=1).reset_index(drop=True)
     test = test.sample(frac=1).reset_index(drop=True)
 
-    nodes = som_fit(train, verbose=0, finetune_treshod=25,
-                    init_learning_rate=.4, finetune_learning_rate=.1,
-                    init_neighbor_coef=.3, finetune_neighbor_coef=.01)
+    nodes = som_fit(train, n_epochs=2, verbose=0, finetune_treshod=25,
+                    init_learning_rate=.4, finetune_learning_rate=.2,
+                    init_neighbor_coef=.3, finetune_neighbor_coef=.03)
     print(nodes)
-    predicted_labels = som_predict(test, nodes)
-    true_labels = test.iloc[:, 4]
+    predicted_labels = label_mapper(som_predict(test, nodes))
+    true_labels = label_mapper(test.iloc[:, 4])
 
-    pca = PCA(2)
-    test_scores = pca.fit_transform(test.iloc[:, :4])
+    conf_matrix = confusion_matrix(true_labels, predicted_labels)
+    print(conf_matrix)
+    print("sensitivity:", sensitivity(conf_matrix))
+    print("specificity:", specificity(conf_matrix))
+    print("accuracy:", accuracy(conf_matrix))
 
-    fig = plt.figure()
-    ax = fig.add_subplot(211)
-    ax.scatter(test_scores[:, 0], test_scores[:, 1], c=color_mapper(predicted_labels), cmap="Set2")
-    ax2 = fig.add_subplot(212)
-    ax2.scatter(test_scores[:, 0], test_scores[:, 1], c=color_mapper(true_labels), cmap="Set2")
-    plt.show()
+
+
 
 
